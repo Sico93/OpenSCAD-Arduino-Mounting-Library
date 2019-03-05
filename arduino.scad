@@ -30,7 +30,7 @@ module arduino(boardType = UNO) {
     color("SteelBlue") 
       boardShape( boardType );
     translate([0,0,-pcbHeight * 0.5]) holePlacement(boardType = boardType)
-      color("SteelBlue") cylinder(r = mountingHoleRadius, h = pcbHeight * 2, $fn=32);
+      color("SteelBlue") cylinder(r = mountingHoleRadius[boardType], h = pcbHeight * 2, $fn=32);
   }
   //Add all components to board
   components( boardType = boardType, component = ALL );
@@ -60,7 +60,7 @@ module bumper( boardType = UNO, mountingHoles = false ) {
 
       //Board mounting holes
       holePlacement(boardType=boardType)
-        cylinder(r = mountingHoleRadius + 1.5, h = bumperBaseHeight, $fn = 32);
+        cylinder(r = mountingHoleRadius[boardType] + 1.5, h = bumperBaseHeight, $fn = 32);
 
       //Bumper mounting holes (exterior)
       if( mountingHoles ) {
@@ -88,10 +88,26 @@ module bumper( boardType = UNO, mountingHoles = false ) {
     }
     translate([0,0,-0.5])
     holePlacement(boardType=boardType)
-      cylinder(r = mountingHoleRadius, h = bumperHeight, $fn = 32);  
+      cylinder(r = mountingHoleRadius[boardType], h = bumperHeight, $fn = 32);
     translate([0, 0, bumperBaseHeight]) {
-      components(boardType = boardType, component = ALL, offset = 1);
+      components(boardType = boardType, component = USB, offset = 1);
     }
+    translate([0, 0, bumperBaseHeight]) {
+      components(boardType = boardType, component = POWER, offset = 1);
+    }
+    translate([0, 0, bumperBaseHeight]) {
+      components(boardType = boardType, component = RJ45, offset = 1);
+    }
+
+    // TODO : Boards are usually not flat on the downside, and pins
+    // currently colide with the structure (resulting in a gap)
+    //translate([0, 0, bumperBaseHeight]) {
+    //  components(boardType = boardType, component = HEADER_M, offset = 0);
+    //}
+    //translate([0, 0, bumperBaseHeight]) {
+    //  components(boardType = boardType, component = HEADER_F, offset = 0);
+    //}
+    // Cooling opening?
     translate([4,(dimensions[1] - dimensions[1] * 0.4)/2,-1])
       cube([dimensions[0] -8,dimensions[1] * 0.4,bumperBaseHeight + 2]);
   }
@@ -103,8 +119,8 @@ INTERIORMOUNTINGHOLES = 1;
 EXTERIORMOUNTINGHOLES = 2;
 
 //Create a board enclosure
-module enclosure(boardType = UNO, wall = 3, offset = 3, heightExtension = 10, cornerRadius = 3, mountType = TAPHOLE) {
-  standOffHeight = 5;
+module enclosure(boardType = UNO, wall = 3, offset = 3, heightExtension = 10, cornerRadius = 3, mountType = TAPHOLE, standOffHeight = 5) {
+  
 
   dimensions = boardDimensions(boardType);
   boardDim = boardDimensions(boardType);
@@ -200,7 +216,7 @@ module boardShape( boardType = UNO, offset = 0, height = pcbHeight ) {
 
 //Create a bounding box around the board
 //Offset - will increase the size of the box on each side,
-//Height - overides the boardHeight and offset in the z direction
+//Height - overrides the boardHeight and offset in the z direction
 
 BOARD = 0;        //Includes all components and PCB
 PCB = 1;          //Just the PCB
@@ -236,15 +252,17 @@ module boundingBox(boardType = UNO, offset = 0, height = 0, cornerRadius = 0, in
 //Creates standoffs for different boards
 TAPHOLE = 0;
 PIN = 1;
+NOTCH = 2;  // Recommended for small radius (< 1.5mm) on FDM printers.
 
-module standoffs( 
-  boardType = UNO, 
-  height = 10, 
-  topRadius = mountingHoleRadius + 1, 
-  bottomRadius =  mountingHoleRadius + 2, 
-  holeRadius = mountingHoleRadius,
+module standoffs(
+  boardType = UNO,
+  height = 10,
   mountType = TAPHOLE
   ) {
+
+  topRadius = mountingHoleRadius[boardType] + 1;
+  bottomRadius =  mountingHoleRadius[boardType] + 2;
+  holeRadius = mountingHoleRadius[boardType];
 
   holePlacement(boardType = boardType)
     union() {
@@ -255,10 +273,17 @@ module standoffs(
         }
       }
       if( mountType == PIN ) {
-        translate([0, 0, height - 1])
+        translate([0, 0, height -1])
         pintack( h=pcbHeight + 3, r = holeRadius, lh=3, lt=1, bh=1, br=topRadius );
       }
-    }  
+      if( mountType == NOTCH ) {
+        $fn = 16;
+        translate([0, 0, height]) {
+          cylinder(r= holeRadius *0.9 , h=pcbHeight+0.1);
+          translate([0, 0, pcbHeight+0.1]) cylinder(r1 = holeRadius + 0.15, r2 = holeRadius * 0.7, h=0.8);
+        }
+      }
+    }
 }
 
 //This is used for placing the mounting holes and for making standoffs
@@ -282,6 +307,21 @@ HEADER_M = 1;
 USB = 2;
 POWER = 3;
 RJ45 = 4;
+HEADER_BI = 5;
+
+module header(dimensions, headerType ) {
+  // zb : height of plastic part of the header: 2.54 for male
+  // zg : height of pin below the board.
+  zb = headerType==HEADER_M?2.54:dimensions[2];
+  zg = headerType==HEADER_BI?dimensions[2]:0.8+pcbHeight;
+
+  color("black") cube( [dimensions[0],dimensions[1],zb] );
+  for (m = [0:dimensions[0]/2.54 -1]) {
+    for (n = [0:dimensions[1]/2.54 -1]) {
+      translate([0.95 + m*2.54, 0.95 + n*2.54, -zg-0.01]) color("yellow") cube([0.64, 0.64,dimensions[2] + zg] );
+    }
+  }
+}
 
 module components( boardType = UNO, component = ALL, extension = 0, offset = 0 ) {
   translate([0, 0, pcbHeight]) {
@@ -297,10 +337,14 @@ module components( boardType = UNO, component = ALL, extension = 0, offset = 0 )
             + ((components[boardType][i][2] * [1,1,1]) 
               * components[boardType][i][2]) * extension
             + ([1,1,1] - components[boardType][i][2]) * offset * 2;        
-          translate( position ) color( components[boardType][i][4] ) 
-            cube( dimensions );
+          translate( position )
+            if(components[boardType][i][3] == HEADER_M || components[boardType][i][3] == HEADER_F || components[boardType][i][3] == HEADER_BI) {
+              header(dimensions, components[boardType][i][3]);
+            } else {
+             color( components[boardType][i][4] ) cube( dimensions );
+            }
       }
-    }  
+    }
   }
 }
 
@@ -412,12 +456,13 @@ YUN = 8;
 INTELGALILEO = 9;
 TRE = 10;
 ETHERNET = 11;
+NANO = 12;
+MKR_WIFI_1010 = 13;
 
 /********************************** MEASUREMENTS **********************************/
 pcbHeight = 1.7;
 headerWidth = 2.54;
 headerHeight = 9;
-mountingHoleRadius = 3.2 / 2;
 
 ngWidth = 53.34;
 leonardoDepth = 68.58 + 1.1;           //PCB depth plus offset of USB jack (1.1)
@@ -462,6 +507,21 @@ megaHoles = [
   [  50.8, 96.52 ]
   ];
 
+// Original nano holes
+nanoHoles = [
+  [  1.27, 1.27 ],
+  [  1.27, 41.91 ],
+  [  16.51, 41.91 ],
+  [  16.51, 1.27 ]
+  ];
+
+mkrHoles = [
+  [ 2.2, 2.2],
+  [ 22.8, 2.2],
+  [ 2.2, 59.3],
+  [ 22.8, 59.3]
+  ];
+
 boardHoles = [ 
   ngHoles,        //NG
   ngHoles,        //Diecimila
@@ -474,7 +534,26 @@ boardHoles = [
   0,              //Yun
   0,              //Intel Galileo
   0,              //Tre
-  unoHoles        //Ethernet
+  unoHoles,       //Ethernet
+  nanoHoles,      //Nano
+  mkrHoles        //MKR WIFI 1010
+  ];
+
+mountingHoleRadius = [
+  1.6,        //NG
+  1.6,        //Diecimila
+  1.6,        //Duemilanove
+  1.6,        //Uno
+  1.6,        //Leonardo
+  1.6,        //Mega
+  1.6,        //Mega 2560
+  1.6,        //Due
+  1.6,        //Yun
+  1.6,        //Intel Galileo
+  1.6,        //Tre
+  1.6,        //Ethernet
+  0.92,       //Nano
+  1.2         //MKR WIFI 1010
   ];
 
 /********************************** BOARD SHAPES **********************************/
@@ -502,6 +581,20 @@ megaBoardShape = [
   [  0.0, 96.52 ]
   ];
 
+ nanoBoardShape = [
+  [  0.0, 0.0 ],
+  [  17.78, 0.0 ],
+  [  17.78, 43.18 ],
+  [  0.0, 43.18]
+  ];
+
+ mkr_wifi_1010BoardShape = [
+  [  0.0, 0.0 ],
+  [  25.0, 0.0 ],
+  [  25.0, 61.5 ],
+  [  0.0, 61.5]
+  ];
+
 boardShapes = [   
   ngBoardShape,   //NG
   ngBoardShape,   //Diecimila
@@ -514,7 +607,9 @@ boardShapes = [
   0,              //Yun
   0,              //Intel Galileo
   0,              //Tre
-  ngBoardShape    //Ethernet
+  ngBoardShape,   //Ethernet
+  nanoBoardShape, //Nano
+  mkr_wifi_1010BoardShape  //MKR WIFI 1010
   ];  
 
 /*********************************** COMPONENTS ***********************************/
@@ -584,7 +679,21 @@ dueComponents = [
   [[27.365, -1.1, 0], [7.5, 5.9, 3], [0, -1, 0], USB, "LightGray" ],
   [[40.7, -1.8, 0], [9.0, 13.2, 10.9], [0, -1, 0], POWER, "Black" ]
   ];
-  
+
+nanoComponents = [
+  [[0, 2.54, 0], [headerWidth, headerWidth * 15, headerHeight], [0, 0, 1], HEADER_M, "Black"],
+  [[15.24, 2.54, 0], [headerWidth, headerWidth * 15, headerHeight], [0, 0, 1], HEADER_M, "Black"],
+  [[4.9, -1.1, 0], [8, 9, 3], [0, -1, 0], USB, "LightGray" ],
+  ];
+
+mkr_wifi_1010Components = [
+  [[1, 20.5, 0], [headerWidth, headerWidth * 14, headerHeight], [0, 0, 1], HEADER_BI, "Black"],
+  [[21.46, 20.5, 0], [headerWidth, headerWidth * 14, headerHeight], [0, 0, 1], HEADER_BI, "Black"],
+  [[9.5, -1.1, 0], [8, 6, 3], [0, -1, 0], USB, "LightGray" ],
+  [[19, 11.25, 0], [6.0, 8, 5.25], [1, 0, 0], POWER, "White" ]
+  ];
+
+
 components = [
   ngComponents,         //NG
   ngComponents,         //Diecimila
@@ -597,7 +706,9 @@ components = [
   0,                    //Yun
   0,                    //Intel Galileo
   0,                    //Tre
-  etherComponents       //Ethernet
+  etherComponents,      //Ethernet
+  nanoComponents,       //Nano
+  mkr_wifi_1010Components //MKR WIFI 1010
   ];
 
 /****************************** NON-BOARD PARAMETERS ******************************/
